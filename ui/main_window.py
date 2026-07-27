@@ -4,7 +4,7 @@ import re
 import traceback
 from typing import Dict, List
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
@@ -155,7 +155,11 @@ class MainWindow(QMainWindow):
         self.toasts = ToastManager(central)
         self._register_shortcuts()
 
-        self.check_ollama_connection(initial=True)
+        # Deferred (not called directly) so MainWindow.__init__() returns and
+        # main.py's window.show() runs before this blocking network check —
+        # otherwise a slow/unreachable Ollama host would freeze the whole
+        # app before the window ever appears.
+        QTimer.singleShot(0, lambda: self.check_ollama_connection(initial=True))
 
         conversations = self.chat_manager.get_chat_list()
         if conversations:
@@ -541,9 +545,13 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def on_stream_chunk(self, token: str) -> None:
+        if self.sender() is not self._worker:
+            return  # stale signal from a worker we already gave up on (Stop/switch chat)
         self.chat_widget.append_streaming_text(token)
 
     def on_stream_completed(self, reply: str, was_stopped: bool, stats: dict) -> None:
+        if self.sender() is not self._worker:
+            return  # stale signal — don't attach this reply to whatever chat is open now
         final_reply = reply.strip()
         if was_stopped:
             final_reply = final_reply or "(dihentikan)"
@@ -566,6 +574,8 @@ class MainWindow(QMainWindow):
         self.logger.debug("Balasan selesai (%s) — %s", "dihentikan" if was_stopped else "normal", stats_text or "no stats")
 
     def on_stream_failed(self, error_text: str) -> None:
+        if self.sender() is not self._worker:
+            return  # stale signal from an abandoned worker
         self.logger.error("Stream Ollama gagal: %s", error_text)
         self.chat_widget.discard_streaming_reply()
         self.chat_widget.add_message(

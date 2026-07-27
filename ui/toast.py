@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import List
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QWidget
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer
+from PySide6.QtWidgets import QGraphicsOpacityEffect, QLabel, QWidget
 
 
 class Toast(QLabel):
@@ -13,6 +13,20 @@ class Toast(QLabel):
         self.setWordWrap(True)
         self.setMaximumWidth(360)
         self.adjustSize()
+
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(0.0)
+        self.setGraphicsEffect(self._opacity_effect)
+
+    def fade(self, start: float, end: float, duration_ms: int, on_finished=None) -> None:
+        anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        anim.setDuration(duration_ms)
+        anim.setStartValue(start)
+        anim.setEndValue(end)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        if on_finished is not None:
+            anim.finished.connect(on_finished)
+        anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
 
 class ToastManager(QWidget):
@@ -30,11 +44,17 @@ class ToastManager(QWidget):
         toast = Toast(message, kind, self)
         toast.adjustSize()
         toast.show()
+        toast.fade(0.0, 1.0, 180)
         self._active.append(toast)
         self._relayout()
         self.raise_()
 
-        QTimer.singleShot(duration_ms, lambda: self._remove(toast))
+        QTimer.singleShot(duration_ms, lambda: self._start_remove(toast))
+
+    def _start_remove(self, toast: Toast) -> None:
+        if toast not in self._active:
+            return
+        toast.fade(1.0, 0.0, 180, on_finished=lambda: self._remove(toast))
 
     def _remove(self, toast: Toast) -> None:
         if toast in self._active:

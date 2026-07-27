@@ -47,6 +47,13 @@ def read_text_preview(path: str, max_chars: int = MAX_TEXT_CHARS) -> str:
     return text
 
 
+# -- persisting attachments alongside a chat message ------------------------
+#
+# Rather than adding a new DB table/column, attachment metadata is appended
+# to the message's own `content` string as an HTML-comment marker (invisible
+# once parsed back out). This keeps chat_database.py untouched and means
+# attachments survive reload/export without any schema migration.
+
 _MARKER_RE = re.compile(r"<!--ATTACH:(.*?)-->", re.DOTALL)
 
 

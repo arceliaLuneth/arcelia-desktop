@@ -3,12 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -182,14 +183,35 @@ class TypingIndicator(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(4)
 
-        text = QLabel("Arcelia sedang mengetik...")
-        text.setObjectName("BubbleTextAssistant")
+        self._base_text = "Arcelia sedang mengetik"
+        self._dot_frames = ["", ".", "..", "..."]
+        self._dot_index = 0
+
+        self.text_label = QLabel(self._base_text)
+        self.text_label.setObjectName("BubbleTextAssistant")
 
         ts = QLabel(datetime.now().strftime("%H:%M"))
         ts.setObjectName("Timestamp")
 
-        layout.addWidget(text)
+        layout.addWidget(self.text_label)
         layout.addWidget(ts, alignment=Qt.AlignRight)
+
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_timer.start(400)
+
+    def _tick(self) -> None:
+        self._dot_index = (self._dot_index + 1) % len(self._dot_frames)
+        self.text_label.setText(self._base_text + self._dot_frames[self._dot_index])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._anim_timer.isActive():
+            self._anim_timer.start(400)
+
+    def hideEvent(self, event) -> None:
+        super().hideEvent(event)
+        self._anim_timer.stop()  # no point animating an invisible widget
 
 
 class ChatWidget(QWidget):
@@ -210,6 +232,14 @@ class ChatWidget(QWidget):
         self._streaming_text: str = ""
         self._is_generating = False
         self._message_index = 0
+
+        # Streaming text arrives token-by-token; re-rendering markdown +
+        # syntax highlighting on every single token is O(n^2) over the
+        # length of the reply. Coalesce into a max ~12 renders/sec instead.
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._flush_streaming_render)
+        self._pending_render = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 22)
@@ -341,7 +371,17 @@ class ChatWidget(QWidget):
         if self._streaming_bubble is not None:
             self._streaming_bubble.adjustSize()
         self.message_container.adjustSize()
-        self.scroll_to_bottom()
+        self.scroll_to_bottom(force=False)
+
+    def _animate_fade_in(self, widget: QWidget) -> None:
+        effect = QGraphicsOpacityEffect(widget)
+        widget.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", widget)
+        anim.setDuration(220)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
     def add_message(
         self,
@@ -370,6 +410,7 @@ class ChatWidget(QWidget):
 
         insert_at = max(0, self.message_layout.count() - 1)
         self.message_layout.insertWidget(insert_at, row)
+        self._animate_fade_in(bubble)
 
         if track:
             self._message_index += 1
@@ -412,24 +453,37 @@ class ChatWidget(QWidget):
 
         insert_at = max(0, self.message_layout.count() - 1)
         self.message_layout.insertWidget(insert_at, row)
+        self._animate_fade_in(bubble)
 
         self._streaming_row = row
         self._streaming_bubble = bubble
         self._streaming_text = ""
 
-        self._refresh_view()
+        self.message_container.adjustSize()
+        self.scroll_to_bottom(force=True)
 
     def append_streaming_text(self, chunk: str) -> None:
         if self._streaming_bubble is None:
             return
 
         self._streaming_text += chunk
+        self._pending_render = True
+        if not self._render_timer.isActive():
+            self._render_timer.start(80)  # ~12 renders/sec max, not one per token
+
+    def _flush_streaming_render(self) -> None:
+        if self._streaming_bubble is None or not self._pending_render:
+            return
         self._streaming_bubble.set_text(self._streaming_text)
+        self._pending_render = False
         self._refresh_view()
 
     def finish_streaming_reply(self, final_text: str | None = None, stats_text: str = "") -> None:
         if self._streaming_bubble is None:
             return
+
+        self._render_timer.stop()
+        self._pending_render = False
 
         if final_text is not None:
             self._streaming_text = final_text
@@ -441,13 +495,17 @@ class ChatWidget(QWidget):
         self._streaming_bubble.set_text(final_text_clean)
         if stats_text:
             self._streaming_bubble.set_stats(stats_text)
-        self._refresh_view()
+        self.message_container.adjustSize()
+        self.scroll_to_bottom(force=True)
 
         self._streaming_row = None
         self._streaming_bubble = None
         self._streaming_text = ""
 
     def discard_streaming_reply(self) -> None:
+        self._render_timer.stop()
+        self._pending_render = False
+
         if self._streaming_row is not None:
             self._streaming_row.setParent(None)
             self._streaming_row.deleteLater()
@@ -529,6 +587,8 @@ class ChatWidget(QWidget):
     def hide_connection_banner(self) -> None:
         self.connection_banner.hide()
 
-    def scroll_to_bottom(self) -> None:
+    def scroll_to_bottom(self, force: bool = True) -> None:
         bar = self.scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        near_bottom = bar.value() >= bar.maximum() - 60
+        if force or near_bottom:
+            bar.setValue(bar.maximum())

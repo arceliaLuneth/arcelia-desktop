@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from skills.base import Skill
 
+# Each skill lists several possible binaries because EndeavourOS users run
+# different desktop environments (KDE, XFCE, GNOME, etc.) and different
+# apps for the "same" job. The registry tries them in order and launches
+# whichever is actually installed.
 
 BUILTIN_SKILLS: list[Skill] = [
     Skill(

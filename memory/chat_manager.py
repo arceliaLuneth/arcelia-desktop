@@ -71,7 +71,10 @@ class ChatManager:
         self.current_messages.append({"role": "assistant", "content": text, "id": msg_id})
 
     def get_current_messages(self) -> List[Message]:
-        return self.current_messages
+        # Return copies, not the live list/dicts — callers (e.g. the
+        # streaming worker's prompt augmentation) must never be able to
+        # accidentally mutate what's actually stored for this conversation.
+        return [dict(m) for m in self.current_messages]
 
     def get_current_conversation_id(self) -> Optional[int]:
         return self.current_conversation_id
