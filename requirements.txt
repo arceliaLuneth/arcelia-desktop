@@ -2,3 +2,6 @@ PySide6
 ollama
 markdown
 pygments
+piper-plus
+vosk
+sounddevice

@@ -221,6 +221,8 @@ class ChatWidget(QWidget):
     edit_requested = Signal(str, int)
     model_changed = Signal(str)
     retry_connection_requested = Signal()
+    voice_toggled = Signal(bool)
+    mic_toggled = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -270,8 +272,17 @@ class ChatWidget(QWidget):
         self.model_selector.setMinimumWidth(140)
         self.model_selector.currentTextChanged.connect(self.model_changed.emit)
 
+        self.voice_toggle = QPushButton("🔇")
+        self.voice_toggle.setObjectName("GhostButton")
+        self.voice_toggle.setFixedWidth(44)
+        self.voice_toggle.setCheckable(True)
+        self.voice_toggle.setToolTip("Aktifkan/matikan suara Arcelia")
+        self.voice_toggle.setCursor(Qt.PointingHandCursor)
+        self.voice_toggle.toggled.connect(self._on_voice_toggled)
+
         header.addLayout(title_box)
         header.addStretch(1)
+        header.addWidget(self.voice_toggle)
         header.addWidget(self.model_selector)
         header.addWidget(status)
 
@@ -350,6 +361,14 @@ class ChatWidget(QWidget):
         self.attach_button.setCursor(Qt.PointingHandCursor)
         self.attach_button.clicked.connect(self._pick_files)
 
+        self.mic_button = QPushButton("🎤")
+        self.mic_button.setObjectName("GhostButton")
+        self.mic_button.setFixedWidth(52)
+        self.mic_button.setCheckable(True)
+        self.mic_button.setCursor(Qt.PointingHandCursor)
+        self.mic_button.setToolTip("Rekam suara — klik lagi untuk berhenti")
+        self.mic_button.toggled.connect(self.mic_toggled.emit)
+
         self.input = PromptInput()
         self.input.setObjectName("PromptInput")
         self.input.setPlaceholderText("Tulis pesan di sini...  (Enter untuk kirim, Shift+Enter untuk baris baru)")
@@ -362,6 +381,7 @@ class ChatWidget(QWidget):
         self.send_button.clicked.connect(self.send_message)
 
         composer_layout.addWidget(self.attach_button)
+        composer_layout.addWidget(self.mic_button)
         composer_layout.addWidget(self.input, 1)
         composer_layout.addWidget(self.send_button)
 
@@ -568,6 +588,35 @@ class ChatWidget(QWidget):
             if path:
                 self.attachment_bar.add_path(path)
         event.acceptProposedAction()
+
+    def _on_voice_toggled(self, enabled: bool) -> None:
+        self.voice_toggle.setText("🔊" if enabled else "🔇")
+        self.voice_toggled.emit(enabled)
+
+    def set_voice_enabled(self, enabled: bool) -> None:
+        """Set the toggle's initial state (e.g. from saved settings) without
+        re-emitting voice_toggled — avoids a pointless save-loop on startup."""
+        self.voice_toggle.blockSignals(True)
+        self.voice_toggle.setChecked(enabled)
+        self.voice_toggle.setText("🔊" if enabled else "🔇")
+        self.voice_toggle.blockSignals(False)
+
+    def set_mic_state(self, recording: bool) -> None:
+        self.mic_button.blockSignals(True)
+        self.mic_button.setChecked(recording)
+        self.mic_button.setText("⏹" if recording else "🎤")
+        self.mic_button.blockSignals(False)
+
+    def insert_transcribed_text(self, text: str) -> None:
+        if not text:
+            return
+        current = self.input.toPlainText()
+        combined = (current + " " + text).strip() if current else text
+        self.input.setPlainText(combined)
+        cursor = self.input.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.input.setTextCursor(cursor)
+        self.input.setFocus()
 
     def set_models(self, models: List[str], current: str) -> None:
         self.model_selector.blockSignals(True)

@@ -26,6 +26,9 @@ from utils.export_import import export_conversation, import_conversation
 from utils.logger import get_logger, setup_logging
 from utils.settings import AppSettings
 from utils.stats import format_session_stats, format_stats
+from voice.text_clean import strip_for_speech
+from voice.stt import STTEngine
+from voice.tts import TTSEngine
 
 Message = Dict[str, str]
 
@@ -95,6 +98,46 @@ class AutoTitleWorker(QThread):
             pass  # Auto-rename is a nice-to-have; silently skip on failure.
 
 
+class SpeakWorker(QThread):
+    """Runs TTS synthesis + playback off the UI thread — both Piper
+    (subprocess) and pyttsx3 (runAndWait) block until audio finishes."""
+
+    failed = Signal(str)
+
+    def __init__(self, engine: TTSEngine, text: str) -> None:
+        super().__init__()
+        self.engine = engine
+        self.text = text
+
+    def run(self) -> None:
+        try:
+            self.engine.speak(self.text)
+        except Exception as e:
+            # Voice is a nice-to-have — never let a TTS failure break the
+            # chat itself — but the user should still be told *why* it
+            # didn't speak, instead of silence with no explanation.
+            self.failed.emit(str(e))
+
+
+class ListenWorker(QThread):
+    """Records from the mic and transcribes with Vosk off the UI thread.
+    Stops when requestInterruption() is called (mic button clicked again)."""
+
+    transcribed = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, engine: STTEngine) -> None:
+        super().__init__()
+        self.engine = engine
+
+    def run(self) -> None:
+        try:
+            text = self.engine.listen_until_stopped(self.isInterruptionRequested)
+            self.transcribed.emit(text)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -116,6 +159,13 @@ class MainWindow(QMainWindow):
         self.skills = SkillRegistry()
         self._worker: StreamWorker | None = None
         self._title_workers: List[AutoTitleWorker] = []
+        self._speak_workers: List[SpeakWorker] = []
+        self.tts = TTSEngine(
+            piper_model_path=self.settings.piper_model_path,
+            piper_config_path=self.settings.piper_config_path,
+        )
+        self._listen_worker: ListenWorker | None = None
+        self.stt = STTEngine(model_path=self.settings.vosk_model_path)
         self._session_replies = 0
         self._session_tokens = 0
 
@@ -148,9 +198,12 @@ class MainWindow(QMainWindow):
         self.chat_widget.edit_requested.connect(self.handle_edit_requested)
         self.chat_widget.model_changed.connect(self.handle_model_changed)
         self.chat_widget.retry_connection_requested.connect(self.check_ollama_connection)
+        self.chat_widget.voice_toggled.connect(self.handle_voice_toggled)
+        self.chat_widget.mic_toggled.connect(self.handle_mic_toggled)
 
         self.apply_theme()
         self.refresh_sidebar()
+        self.chat_widget.set_voice_enabled(self.settings.voice_enabled)
 
         self.toasts = ToastManager(central)
         self._register_shortcuts()
@@ -201,6 +254,88 @@ class MainWindow(QMainWindow):
         self.logger.info("Model default diganti ke %s", model_name)
         self.toasts.show_toast(f"Model diganti ke {model_name}", kind="info")
 
+    def handle_voice_toggled(self, enabled: bool) -> None:
+        self.settings.voice_enabled = enabled
+        self.settings.save()
+        self.logger.info("Suara %s", "diaktifkan" if enabled else "dimatikan")
+
+        if enabled:
+            backend = self.tts.backend_name()
+            if backend == "none":
+                self.toasts.show_toast(
+                    "Belum ada engine TTS terpasang (Piper belum diatur, pyttsx3 tidak ada). "
+                    "Cek Settings untuk atur model Piper.",
+                    kind="error",
+                )
+            else:
+                self.toasts.show_toast(f"Suara aktif ({backend})", kind="success")
+
+    def _speak(self, text: str) -> None:
+        if not self.settings.voice_enabled:
+            return
+        spoken_text = strip_for_speech(text)
+        if not spoken_text:
+            return
+
+        worker = SpeakWorker(self.tts, spoken_text)
+        worker.failed.connect(self.on_speak_failed)
+        worker.finished.connect(lambda w=worker: self._forget_speak_worker(w))
+        self._speak_workers.append(worker)
+        worker.start()
+
+    def on_speak_failed(self, error_text: str) -> None:
+        if self.sender() not in self._speak_workers:
+            return  # stale signal from a worker we already cleaned up
+        self.logger.warning("TTS gagal: %s", error_text)
+        self.toasts.show_toast(f"Suara gagal: {error_text}", kind="error")
+
+    def _forget_speak_worker(self, worker: SpeakWorker) -> None:
+        if worker in self._speak_workers:
+            self._speak_workers.remove(worker)
+
+    def handle_mic_toggled(self, recording: bool) -> None:
+        if recording:
+            if not self.stt.is_ready():
+                self.chat_widget.set_mic_state(False)
+                self.toasts.show_toast(
+                    "Model Vosk belum diatur — cek Settings untuk atur voice input.",
+                    kind="error",
+                )
+                return
+
+            self._listen_worker = ListenWorker(self.stt)
+            self._listen_worker.transcribed.connect(self.on_transcribed)
+            self._listen_worker.failed.connect(self.on_listen_failed)
+            self._listen_worker.finished.connect(self.on_listen_finished)
+            self._listen_worker.start()
+            self.chat_widget.set_mic_state(True)
+            self.toasts.show_toast("Mendengarkan... klik 🎤 lagi untuk berhenti", kind="info")
+            self.logger.debug("Mulai merekam suara")
+        else:
+            if self._listen_worker is not None:
+                self._listen_worker.requestInterruption()
+            # UI flips back to the mic icon once on_listen_finished fires —
+            # not immediately, since transcription still needs to finish.
+
+    def on_transcribed(self, text: str) -> None:
+        if self.sender() is not self._listen_worker:
+            return
+        if text:
+            self.chat_widget.insert_transcribed_text(text)
+            self.logger.debug("Transkripsi: %s", text)
+        else:
+            self.toasts.show_toast("Tidak menangkap ucapan apa pun.", kind="info")
+
+    def on_listen_failed(self, error_text: str) -> None:
+        if self.sender() is not self._listen_worker:
+            return
+        self.logger.error("Voice input gagal: %s", error_text)
+        self.toasts.show_toast(f"Gagal merekam suara: {error_text}", kind="error")
+
+    def on_listen_finished(self) -> None:
+        self.chat_widget.set_mic_state(False)
+        self._listen_worker = None
+
     def handle_open_settings(self) -> None:
         available_models: List[str] = []
         try:
@@ -232,6 +367,10 @@ class MainWindow(QMainWindow):
             setup_logging(debug=self.settings.debug_mode)
             self.logger = get_logger()
             self.logger.info("Pengaturan disimpan (host_changed=%s, theme_changed=%s)", host_changed, theme_changed)
+
+            self.tts.update_piper_model(self.settings.piper_model_path, self.settings.piper_config_path)
+            self.stt.update_model_path(self.settings.vosk_model_path)
+            self.chat_widget.set_voice_enabled(self.settings.voice_enabled)
 
             if theme_changed:
                 self.apply_theme()
@@ -268,6 +407,13 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "toasts"):
             self.toasts.sync_geometry()
+
+    def closeEvent(self, event) -> None:
+        self.stop_worker_if_running()
+        if self._listen_worker is not None and self._listen_worker.isRunning():
+            self._listen_worker.requestInterruption()
+            self._listen_worker.wait(1000)
+        super().closeEvent(event)
 
     def refresh_sidebar(self) -> None:
         conversations = self.chat_manager.get_chat_list()
@@ -377,6 +523,7 @@ class MainWindow(QMainWindow):
         self.refresh_sidebar()
         self.chat_widget.add_message(message, role="assistant", track=False)
         self.chat_widget.show_regenerate(False)
+        self._speak(message)
 
         self.toasts.show_toast(message, kind="success" if success else "error")
         if success:
@@ -565,6 +712,9 @@ class MainWindow(QMainWindow):
         self.chat_widget.finish_streaming_reply(final_reply, stats_text)
         self.chat_widget.show_regenerate(True)
         self.maybe_auto_rename()
+
+        if not was_stopped and final_reply not in ("...", ""):
+            self._speak(final_reply)
 
         self._session_replies += 1
         if stats.get("eval_count"):

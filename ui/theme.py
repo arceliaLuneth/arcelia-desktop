@@ -162,6 +162,9 @@ def build_stylesheet(theme: str = "dark") -> str:
             padding: 12px 14px; font-weight: 700;
         }}
         QPushButton#GhostButton:hover {{ background: {p['surface_hover']}; }}
+        QPushButton#GhostButton:checked {{
+            background: {p['accent']}; border: 1px solid {p['accent']}; color: white;
+        }}
 
         QScrollArea#MessagesScroll {{ background: transparent; border: none; }}
         QWidget#MessagesContainer {{ background: transparent; }}

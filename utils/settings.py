@@ -16,6 +16,10 @@ class AppSettings:
     )
     theme: str = "dark"  # "dark" | "light"
     debug_mode: bool = False
+    voice_enabled: bool = False
+    piper_model_path: str = ""
+    piper_config_path: str = ""
+    vosk_model_path: str = ""
 
     @classmethod
     def _settings_path(cls) -> Path:
