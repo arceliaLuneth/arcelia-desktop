@@ -3,9 +3,11 @@
   "model": "qwen2.5:3b",
   "system_prompt": "You are Arcelia, a helpful desktop AI assistant. Reply naturally, clearly, and briefly unless the user asks for detail. Always answer in Indonesian unless the user asks otherwise.",
   "theme": "dark",
-  "debug_mode": false,
-  "voice_enabled": true,
+  "debug_mode": true,
+  "voice_enabled": false,
   "piper_model_path": "",
   "piper_config_path": "",
-  "vosk_model_path": ""
+  "vosk_model_path": "",
+  "character_enabled": false,
+  "vrm_path": "/home/nozisa/Documents/Project/AI_Assistant/Arcelia/character/arcelia.vrm"
 }

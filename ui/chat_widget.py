@@ -40,6 +40,8 @@ class PromptInput(QTextEdit):
 class MessageBubble(QFrame):
     edit_clicked = Signal()
 
+    ASSISTANT_TEXT_WIDTH = 720  # capped reading width, Claude/ChatGPT-style
+
     def __init__(
         self,
         text: str,
@@ -51,13 +53,21 @@ class MessageBubble(QFrame):
         self.role = role
         self._raw_text = ""
         self._code_blocks: dict[str, str] = {}
+        self._stats_text = ""
 
-        self.setObjectName("BubbleAssistant" if role == "assistant" else "BubbleUser")
+        # Only user messages get the "bubble" box treatment now — assistant
+        # replies render as plain flowing text (Claude/ChatGPT-style),
+        # distinguished by left alignment + the small "ARCELIA" label
+        # instead of a background/border.
+        self.setObjectName("BubbleUser" if role == "user" else "PlainAssistant")
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-        self.setMaximumWidth(760)
+        self.setMaximumWidth(self.ASSISTANT_TEXT_WIDTH if role == "assistant" else 760)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
+        if role == "assistant":
+            layout.setContentsMargins(4, 4, 4, 4)
+        else:
+            layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(6)
 
         role_label = QLabel("YOU" if role == "user" else "ARCELIA")
@@ -86,7 +96,7 @@ class MessageBubble(QFrame):
 
         if role == "assistant":
             self.body = QTextBrowser()
-            self.body.setObjectName("BubbleTextAssistant")
+            self.body.setObjectName("PlainTextAssistant")
             self.body.setFrameShape(QFrame.NoFrame)
             self.body.setOpenLinks(False)
             self.body.setOpenExternalLinks(False)
@@ -105,41 +115,52 @@ class MessageBubble(QFrame):
 
         layout.addWidget(self.body)
 
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
         if role == "assistant":
+            # One compact row: Copy button on the left, timestamp (+ token
+            # stats once available) on the right — instead of three
+            # separate stacked rows, which read as clutter without a
+            # bubble box to visually contain them.
+            meta_row = QHBoxLayout()
+            meta_row.setSpacing(10)
+
             copy_btn = QPushButton("Copy")
             copy_btn.setObjectName("BubbleActionButton")
             copy_btn.setCursor(Qt.PointingHandCursor)
             copy_btn.clicked.connect(self._copy_full_text)
-            actions.addWidget(copy_btn)
+            meta_row.addWidget(copy_btn)
+            meta_row.addStretch(1)
+
+            self.meta_label = QLabel(datetime.now().strftime("%H:%M"))
+            self.meta_label.setObjectName("Timestamp")
+            meta_row.addWidget(self.meta_label)
+
+            layout.addLayout(meta_row)
+            self.stats_label = None  # kept for API compat; folded into meta_label now
         else:
+            actions = QHBoxLayout()
+            actions.setSpacing(8)
             edit_btn = QPushButton("Edit")
             edit_btn.setObjectName("BubbleActionButton")
             edit_btn.setCursor(Qt.PointingHandCursor)
             edit_btn.clicked.connect(self.edit_clicked.emit)
             actions.addWidget(edit_btn)
-        actions.addStretch(1)
-        layout.addLayout(actions)
+            actions.addStretch(1)
+            layout.addLayout(actions)
 
-        ts = QLabel(datetime.now().strftime("%H:%M"))
-        ts.setObjectName("Timestamp")
-        layout.addWidget(ts, alignment=Qt.AlignRight)
-
-        self.stats_label: Optional[QLabel] = None
-        if role == "assistant":
-            self.stats_label = QLabel("")
-            self.stats_label.setObjectName("BubbleStats")
-            self.stats_label.hide()
-            layout.addWidget(self.stats_label, alignment=Qt.AlignRight)
+            ts = QLabel(datetime.now().strftime("%H:%M"))
+            ts.setObjectName("Timestamp")
+            layout.addWidget(ts, alignment=Qt.AlignRight)
+            self.meta_label = None
+            self.stats_label = None
 
         self.set_text(text)
 
     def set_stats(self, stats_text: str) -> None:
-        if self.stats_label is None or not stats_text:
+        if self.role != "assistant" or not stats_text or self.meta_label is None:
             return
-        self.stats_label.setText(stats_text)
-        self.stats_label.show()
+        self._stats_text = stats_text
+        timestamp = datetime.now().strftime("%H:%M")
+        self.meta_label.setText(f"{timestamp} · {stats_text}")
 
     def set_text(self, text: str) -> None:
         self._raw_text = text
@@ -147,7 +168,7 @@ class MessageBubble(QFrame):
         if self.role == "assistant":
             html_content, code_blocks = render_markdown(text if text else " ")
             self._code_blocks = code_blocks
-            self.body.document().setTextWidth(720)
+            self.body.document().setTextWidth(self.ASSISTANT_TEXT_WIDTH - 8)
             self.body.setHtml(html_content)
             self._adjust_body_height()
         else:
@@ -176,7 +197,7 @@ class MessageBubble(QFrame):
 class TypingIndicator(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setObjectName("BubbleAssistant")
+        self.setObjectName("TypingBubble")
         self.setMaximumWidth(220)
 
         layout = QVBoxLayout(self)
@@ -188,7 +209,7 @@ class TypingIndicator(QFrame):
         self._dot_index = 0
 
         self.text_label = QLabel(self._base_text)
-        self.text_label.setObjectName("BubbleTextAssistant")
+        self.text_label.setObjectName("TypingBubbleText")
 
         ts = QLabel(datetime.now().strftime("%H:%M"))
         ts.setObjectName("Timestamp")
@@ -262,11 +283,6 @@ class ChatWidget(QWidget):
         title_box.addWidget(title)
         title_box.addWidget(subtitle)
 
-        status = QLabel("ONLINE")
-        status.setObjectName("StatusPill")
-        status.setAlignment(Qt.AlignCenter)
-        status.setFixedHeight(28)
-
         self.model_selector = QComboBox()
         self.model_selector.setObjectName("ModelSelector")
         self.model_selector.setMinimumWidth(140)
@@ -284,7 +300,6 @@ class ChatWidget(QWidget):
         header.addStretch(1)
         header.addWidget(self.voice_toggle)
         header.addWidget(self.model_selector)
-        header.addWidget(status)
 
         root.addLayout(header)
 

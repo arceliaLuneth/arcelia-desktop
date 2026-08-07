@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import re
 import traceback
+from pathlib import Path
 from typing import Dict, List
 
 from PySide6.QtCore import QThread, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from ai.client import OllamaClient
@@ -18,6 +19,7 @@ from attachments.manager import (
 from memory.chat_manager import ChatManager
 from skills.registry import SkillRegistry
 from ui.chat_widget import ChatWidget
+from ui.character_panel import CharacterPanel
 from ui.settings_dialog import SettingsDialog
 from ui.sidebar import Sidebar
 from ui.theme import build_stylesheet
@@ -143,6 +145,9 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Arcelia")
+        icon_path = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
         self.setMinimumSize(1100, 720)
 
@@ -180,8 +185,18 @@ class MainWindow(QMainWindow):
         self.sidebar = Sidebar()
         self.chat_widget = ChatWidget()
 
+        # Character panel is always constructed (so settings/signals stay
+        # wired consistently) but only visible + loaded when the user has
+        # enabled it with a VRM path set — see _apply_character_settings().
+        initial_vrm = self.settings.vrm_path if self.settings.character_enabled else ""
+        self.character_panel = CharacterPanel(vrm_path=initial_vrm, logger=self.logger)
+        self.character_panel.setFixedWidth(320)
+        self.character_panel.vrm_load_result.connect(self.on_vrm_load_result)
+        self.character_panel.setVisible(bool(initial_vrm))
+
         root.addWidget(self.sidebar)
         root.addWidget(self.chat_widget, 1)
+        root.addWidget(self.character_panel)
 
         self.sidebar.new_chat_clicked.connect(self.handle_new_chat)
         self.sidebar.conversation_selected.connect(self.handle_conversation_selected)
@@ -192,6 +207,7 @@ class MainWindow(QMainWindow):
         self.sidebar.export_clicked.connect(self.handle_export)
         self.sidebar.import_clicked.connect(self.handle_import)
         self.sidebar.settings_clicked.connect(self.handle_open_settings)
+        self.sidebar.shortcuts_clicked.connect(self.show_shortcuts_help)
         self.chat_widget.message_sent.connect(self.handle_user_message)
         self.chat_widget.stop_requested.connect(self.handle_stop_generating)
         self.chat_widget.regenerate_requested.connect(self.handle_regenerate)
@@ -219,7 +235,7 @@ class MainWindow(QMainWindow):
             first_id = int(conversations[0]["id"])
             self.load_conversation(first_id)
         else:
-            self.start_fresh_chat()
+            self.start_fresh_chat(is_first_run=True)
 
     def apply_theme(self) -> None:
         self.setStyleSheet(build_stylesheet(self.settings.theme))
@@ -270,12 +286,21 @@ class MainWindow(QMainWindow):
             else:
                 self.toasts.show_toast(f"Suara aktif ({backend})", kind="success")
 
+    def on_vrm_load_result(self, ok: bool, error: str) -> None:
+        if ok:
+            self.toasts.show_toast("Karakter VRM berhasil dimuat", kind="success")
+        else:
+            self.toasts.show_toast(f"Gagal memuat karakter: {error}", kind="error")
+
     def _speak(self, text: str) -> None:
         if not self.settings.voice_enabled:
             return
         spoken_text = strip_for_speech(text)
         if not spoken_text:
             return
+
+        if self.character_panel.isVisible():
+            self.character_panel.set_speaking(True)
 
         worker = SpeakWorker(self.tts, spoken_text)
         worker.failed.connect(self.on_speak_failed)
@@ -292,6 +317,8 @@ class MainWindow(QMainWindow):
     def _forget_speak_worker(self, worker: SpeakWorker) -> None:
         if worker in self._speak_workers:
             self._speak_workers.remove(worker)
+        if self.character_panel.isVisible() and not self._speak_workers:
+            self.character_panel.set_speaking(False)
 
     def handle_mic_toggled(self, recording: bool) -> None:
         if recording:
@@ -371,12 +398,19 @@ class MainWindow(QMainWindow):
             self.tts.update_piper_model(self.settings.piper_model_path, self.settings.piper_config_path)
             self.stt.update_model_path(self.settings.vosk_model_path)
             self.chat_widget.set_voice_enabled(self.settings.voice_enabled)
+            self._apply_character_settings()
 
             if theme_changed:
                 self.apply_theme()
 
             self.check_ollama_connection()
             self.toasts.show_toast("Pengaturan disimpan", kind="success")
+
+    def _apply_character_settings(self) -> None:
+        want_visible = self.settings.character_enabled and bool(self.settings.vrm_path)
+        self.character_panel.setVisible(want_visible)
+        if want_visible:
+            self.character_panel.load_vrm(self.settings.vrm_path)
 
     def _register_shortcuts(self) -> None:
         self._shortcuts: List[QShortcut] = []
@@ -421,16 +455,25 @@ class MainWindow(QMainWindow):
         stats_text = format_session_stats(self._session_replies, self._session_tokens)
         self.sidebar.set_session_stats(stats_text or "")
 
-    def start_fresh_chat(self) -> None:
+    def start_fresh_chat(self, is_first_run: bool = False) -> None:
         conversation_id = self.chat_manager.new_chat("New Chat")
         self.refresh_sidebar()
         self.sidebar.select_conversation(conversation_id)
         self.chat_widget.clear_messages()
-        self.chat_widget.add_message(
-            "Chat baru dibuat. Silakan kirim pesan.",
-            role="assistant",
-            track=False,
-        )
+
+        if is_first_run:
+            welcome = (
+                "Halo! Aku Arcelia. Beberapa hal yang mungkin belum kelihatan dari tampilan doang:\n\n"
+                "- Ketik perintah kayak \"buka spotify\" atau \"buka terminal\" — aku langsung jalanin, gak lewat AI dulu.\n"
+                "- Tombol 🎤 di sebelah kolom pesan buat ngomong, bukan cuma ngetik.\n"
+                "- Tekan `Ctrl+/` kapan aja buat lihat semua keyboard shortcut.\n"
+                "- Klik **Settings** di sidebar buat atur suara, model, tema, dan karakter avatar.\n\n"
+                "Kirim pesan aja kapan siap. 😊"
+            )
+        else:
+            welcome = "Chat baru dibuat. Silakan kirim pesan."
+
+        self.chat_widget.add_message(welcome, role="assistant", track=False)
 
     def load_conversation(self, conversation_id: int) -> None:
         messages = self.chat_manager.load_chat(conversation_id)

@@ -16,7 +16,7 @@ body {{
     color: #eef4fb;
     background: transparent;
 }}
-p {{ margin: 4px 0; }}
+p {{ margin: 10px 0; line-height: 1.55; }}
 h1, h2, h3, h4 {{ margin: 10px 0 6px 0; color: #f5f8fc; }}
 ul, ol {{ margin: 4px 0 4px 20px; }}
 code {{

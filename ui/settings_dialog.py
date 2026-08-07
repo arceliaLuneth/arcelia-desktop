@@ -100,6 +100,23 @@ class SettingsDialog(QDialog):
         vosk_row.addWidget(vosk_browse_btn)
         layout.addLayout(vosk_row)
 
+        layout.addWidget(self._field_label("Karakter (avatar VRM)"))
+        self.character_checkbox = QCheckBox("Tampilkan jendela karakter di desktop")
+        self.character_checkbox.setObjectName("SettingsCheckbox")
+        self.character_checkbox.setChecked(settings.character_enabled)
+        layout.addWidget(self.character_checkbox)
+
+        vrm_row = QHBoxLayout()
+        self.vrm_path_input = QLineEdit(settings.vrm_path)
+        self.vrm_path_input.setObjectName("SettingsField")
+        self.vrm_path_input.setPlaceholderText("Path ke file .vrm karaktermu")
+        vrm_browse_btn = QPushButton("Pilih...")
+        vrm_browse_btn.setObjectName("SecondaryButton")
+        vrm_browse_btn.clicked.connect(self._browse_vrm)
+        vrm_row.addWidget(self.vrm_path_input, 1)
+        vrm_row.addWidget(vrm_browse_btn)
+        layout.addLayout(vrm_row)
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
 
@@ -136,6 +153,11 @@ class SettingsDialog(QDialog):
         if path:
             self.vosk_model_input.setText(path)
 
+    def _browse_vrm(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Pilih file VRM", "", "VRM model (*.vrm)")
+        if path:
+            self.vrm_path_input.setText(path)
+
     def _save_and_close(self) -> None:
         self._result_settings = AppSettings(
             ollama_host=self.host_input.text().strip() or "http://localhost:11434",
@@ -147,6 +169,8 @@ class SettingsDialog(QDialog):
             piper_model_path=self.piper_model_input.text().strip(),
             piper_config_path=self.piper_config_input.text().strip(),
             vosk_model_path=self.vosk_model_input.text().strip(),
+            character_enabled=self.character_checkbox.isChecked(),
+            vrm_path=self.vrm_path_input.text().strip(),
         )
         self.accept()
 

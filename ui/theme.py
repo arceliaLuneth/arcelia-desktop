@@ -77,6 +77,21 @@ def build_stylesheet(theme: str = "dark") -> str:
             border-right: 1px solid {p['sidebar_border']};
         }}
 
+        QWidget#CharacterPanel {{
+            background: {p['sidebar_bg']};
+            border-left: 1px solid {p['sidebar_border']};
+        }}
+
+        QLabel#CharacterOverlay {{
+            background: {p['sidebar_bg']};
+            color: {p['text_muted']};
+            font-size: 13px;
+            padding: 24px;
+        }}
+        QLabel#CharacterOverlay[error="true"] {{
+            color: {p['danger']};
+        }}
+
         QLabel#SidebarTitle {{ color: {p['text_primary']}; font-size: 26px; font-weight: 800; }}
         QLabel#SidebarSubtitle {{ color: {p['text_secondary']}; font-size: 12px; }}
 
@@ -121,12 +136,6 @@ def build_stylesheet(theme: str = "dark") -> str:
         QLabel#ChatHeaderTitle {{ color: {p['text_primary']}; font-size: 22px; font-weight: 800; }}
         QLabel#ChatHeaderSubtitle {{ color: {p['text_secondary']}; font-size: 12px; }}
 
-        QLabel#StatusPill {{
-            background: {p['pill_bg']}; color: {p['pill_text']};
-            border: 1px solid {p['pill_border']}; border-radius: 10px;
-            padding: 4px 10px; font-size: 11px; font-weight: 700;
-        }}
-
         QComboBox#ModelSelector {{
             background: {p['surface']}; color: {p['text_body']};
             border: 1px solid {p['surface_border']}; border-radius: 10px;
@@ -169,18 +178,23 @@ def build_stylesheet(theme: str = "dark") -> str:
         QScrollArea#MessagesScroll {{ background: transparent; border: none; }}
         QWidget#MessagesContainer {{ background: transparent; }}
 
-        QFrame#BubbleAssistant {{
+        QWidget#PlainAssistant {{
+            background: transparent;
+            border: none;
+        }}
+        QFrame#TypingBubble {{
             background: {p['bubble_assistant_bg']};
             border: 1px solid {p['bubble_assistant_border']};
             border-radius: 18px;
         }}
+        QLabel#TypingBubbleText {{ color: {p['text_body']}; font-size: 14px; }}
         QFrame#BubbleUser {{
             background: {p['bubble_user_bg']};
             border: 1px solid {p['bubble_user_border']};
             border-radius: 18px;
         }}
 
-        QTextBrowser#BubbleTextAssistant {{
+        QTextBrowser#PlainTextAssistant {{
             background: transparent; border: none; color: {p['text_body']}; font-size: 14px;
         }}
         QLabel#BubbleTextUser {{ color: {p['bubble_text_user']}; font-size: 14px; }}
@@ -195,7 +209,6 @@ def build_stylesheet(theme: str = "dark") -> str:
         }}
 
         QLabel#Timestamp {{ color: {p['timestamp']}; font-size: 11px; }}
-        QLabel#BubbleStats {{ color: {p['text_muted']}; font-size: 10px; }}
         QLabel#MessageRole {{ color: {p['text_muted']}; font-size: 11px; font-weight: 700; letter-spacing: 0.4px; }}
 
         QFrame#AttachmentChip {{

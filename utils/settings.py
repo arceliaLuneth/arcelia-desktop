@@ -20,6 +20,8 @@ class AppSettings:
     piper_model_path: str = ""
     piper_config_path: str = ""
     vosk_model_path: str = ""
+    character_enabled: bool = False
+    vrm_path: str = ""
 
     @classmethod
     def _settings_path(cls) -> Path:

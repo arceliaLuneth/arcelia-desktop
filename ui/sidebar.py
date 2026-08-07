@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -28,6 +29,7 @@ class Sidebar(QFrame):
     export_clicked = Signal()
     import_clicked = Signal()
     settings_clicked = Signal()
+    shortcuts_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -82,6 +84,10 @@ class Sidebar(QFrame):
         settings_btn.setObjectName("SecondaryButton")
         settings_btn.clicked.connect(self.settings_clicked.emit)
 
+        self.shortcuts_btn = QPushButton("⌨ Keyboard shortcuts")
+        self.shortcuts_btn.setObjectName("SecondaryButton")
+        self.shortcuts_btn.clicked.connect(self.shortcuts_clicked.emit)
+
         self.session_stats_label = QLabel("")
         self.session_stats_label.setObjectName("SessionStats")
         self.session_stats_label.setAlignment(Qt.AlignCenter)
@@ -95,6 +101,7 @@ class Sidebar(QFrame):
         layout.addWidget(self.export_btn)
         layout.addWidget(self.import_btn)
         layout.addWidget(settings_btn)
+        layout.addWidget(self.shortcuts_btn)
         layout.addWidget(self.session_stats_label)
 
     def set_session_stats(self, text: str) -> None:
@@ -181,4 +188,13 @@ class Sidebar(QFrame):
                 self.rename_requested.emit(conversation_id, new_title.strip())
 
         elif chosen == delete_action:
-            self.delete_requested.emit(conversation_id)
+            current_title = item.text().replace("📌 ", "", 1)
+            confirm = QMessageBox.question(
+                self,
+                "Hapus chat?",
+                f'Hapus percakapan "{current_title}"?\n\nIni tidak bisa dibatalkan — seluruh isi chat akan hilang permanen.',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if confirm == QMessageBox.Yes:
+                self.delete_requested.emit(conversation_id)
