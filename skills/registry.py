@@ -7,9 +7,6 @@ from typing import List, Optional, Tuple
 from skills.apps import BUILTIN_SKILLS
 from skills.base import Skill
 
-# A message only triggers a skill if it contains BOTH a trigger verb and a
-# known app keyword. This keeps ordinary questions like "cara pakai
-# spotify gimana?" from accidentally launching the app.
 TRIGGER_WORDS = [
     "buka", "bukakan", "jalankan", "nyalain", "nyalakan",
     "mulai", "start", "launch", "run", "open",

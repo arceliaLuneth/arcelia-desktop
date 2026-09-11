@@ -39,6 +39,7 @@ class PromptInput(QTextEdit):
 
 class MessageBubble(QFrame):
     edit_clicked = Signal()
+    regenerate_clicked = Signal()
 
     ASSISTANT_TEXT_WIDTH = 720  # capped reading width, Claude/ChatGPT-style
 
@@ -54,6 +55,7 @@ class MessageBubble(QFrame):
         self._raw_text = ""
         self._code_blocks: dict[str, str] = {}
         self._stats_text = ""
+        self._regenerate_eligible = False
 
         # Only user messages get the "bubble" box treatment now — assistant
         # replies render as plain flowing text (Claude/ChatGPT-style),
@@ -62,6 +64,7 @@ class MessageBubble(QFrame):
         self.setObjectName("BubbleUser" if role == "user" else "PlainAssistant")
         self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.setMaximumWidth(self.ASSISTANT_TEXT_WIDTH if role == "assistant" else 760)
+        self.setAttribute(Qt.WA_Hover, True)
 
         layout = QVBoxLayout(self)
         if role == "assistant":
@@ -115,48 +118,73 @@ class MessageBubble(QFrame):
 
         layout.addWidget(self.body)
 
-        if role == "assistant":
-            # One compact row: Copy button on the left, timestamp (+ token
-            # stats once available) on the right — instead of three
-            # separate stacked rows, which read as clutter without a
-            # bubble box to visually contain them.
-            meta_row = QHBoxLayout()
-            meta_row.setSpacing(10)
+        # Action icons (Copy / Edit / Regenerate) are icon-only and only
+        # shown on hover — Claude/ChatGPT-style, instead of a permanently
+        # visible text button that competes with the message content.
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(4)
 
-            copy_btn = QPushButton("Copy")
-            copy_btn.setObjectName("BubbleActionButton")
-            copy_btn.setCursor(Qt.PointingHandCursor)
+        self._action_buttons: List[QPushButton] = []
+
+        if role == "assistant":
+            copy_btn = self._make_icon_button("⧉", "Copy")
             copy_btn.clicked.connect(self._copy_full_text)
             meta_row.addWidget(copy_btn)
-            meta_row.addStretch(1)
 
-            self.meta_label = QLabel(datetime.now().strftime("%H:%M"))
-            self.meta_label.setObjectName("Timestamp")
-            meta_row.addWidget(self.meta_label)
-
-            layout.addLayout(meta_row)
-            self.stats_label = None  # kept for API compat; folded into meta_label now
+            self.regenerate_btn = self._make_icon_button("↻", "Regenerate response")
+            self.regenerate_btn.clicked.connect(self.regenerate_clicked.emit)
+            self.regenerate_btn.hide()  # only shown for the latest reply, via set_regenerate_eligible()
+            meta_row.addWidget(self.regenerate_btn)
         else:
-            actions = QHBoxLayout()
-            actions.setSpacing(8)
-            edit_btn = QPushButton("Edit")
-            edit_btn.setObjectName("BubbleActionButton")
-            edit_btn.setCursor(Qt.PointingHandCursor)
+            self.regenerate_btn = None
+            edit_btn = self._make_icon_button("✎", "Edit")
             edit_btn.clicked.connect(self.edit_clicked.emit)
-            actions.addWidget(edit_btn)
-            actions.addStretch(1)
-            layout.addLayout(actions)
+            meta_row.addWidget(edit_btn)
 
-            ts = QLabel(datetime.now().strftime("%H:%M"))
-            ts.setObjectName("Timestamp")
-            layout.addWidget(ts, alignment=Qt.AlignRight)
-            self.meta_label = None
-            self.stats_label = None
+        meta_row.addStretch(1)
 
+        self.meta_label = QLabel(datetime.now().strftime("%H:%M"))
+        self.meta_label.setObjectName("Timestamp")
+        meta_row.addWidget(self.meta_label)
+
+        layout.addLayout(meta_row)
+        self.stats_label = None  # kept for API compat
+
+        self._set_actions_visible(False)
         self.set_text(text)
 
+    def _make_icon_button(self, icon: str, tooltip: str) -> QPushButton:
+        btn = QPushButton(icon)
+        btn.setObjectName("BubbleIconButton")
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(26, 22)
+        self._action_buttons.append(btn)
+        return btn
+
+    def _set_actions_visible(self, visible: bool) -> None:
+        for btn in self._action_buttons:
+            btn.setVisible(visible)
+        if self.regenerate_btn is not None:
+            self.regenerate_btn.setVisible(visible and self._regenerate_eligible)
+
+    def enterEvent(self, event) -> None:
+        self._set_actions_visible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._set_actions_visible(False)
+        super().leaveEvent(event)
+
+    def set_regenerate_eligible(self, eligible: bool) -> None:
+        """Only the most recent assistant reply should offer 'Regenerate' —
+        ChatWidget calls this to turn it on/off as new messages arrive."""
+        self._regenerate_eligible = eligible
+        if self.regenerate_btn is not None:
+            self.regenerate_btn.setVisible(False)  # only reveal again on next hover
+
     def set_stats(self, stats_text: str) -> None:
-        if self.role != "assistant" or not stats_text or self.meta_label is None:
+        if self.role != "assistant" or not stats_text:
             return
         self._stats_text = stats_text
         timestamp = datetime.now().strftime("%H:%M")
@@ -255,6 +283,7 @@ class ChatWidget(QWidget):
         self._streaming_text: str = ""
         self._is_generating = False
         self._message_index = 0
+        self._last_assistant_bubble: MessageBubble | None = None
 
         # Streaming text arrives token-by-token; re-rendering markdown +
         # syntax highlighting on every single token is O(n^2) over the
@@ -269,19 +298,8 @@ class ChatWidget(QWidget):
         root.setSpacing(14)
 
         header = QHBoxLayout()
-        header.setSpacing(12)
-
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
-
-        title = QLabel("Chat")
-        title.setObjectName("ChatHeaderTitle")
-
-        subtitle = QLabel("Local UI ready • Tersambung ke Ollama")
-        subtitle.setObjectName("ChatHeaderSubtitle")
-
-        title_box.addWidget(title)
-        title_box.addWidget(subtitle)
+        header.setSpacing(10)
+        header.setContentsMargins(2, 0, 2, 0)
 
         self.model_selector = QComboBox()
         self.model_selector.setObjectName("ModelSelector")
@@ -290,16 +308,15 @@ class ChatWidget(QWidget):
 
         self.voice_toggle = QPushButton("🔇")
         self.voice_toggle.setObjectName("GhostButton")
-        self.voice_toggle.setFixedWidth(44)
+        self.voice_toggle.setFixedWidth(40)
         self.voice_toggle.setCheckable(True)
         self.voice_toggle.setToolTip("Aktifkan/matikan suara Arcelia")
         self.voice_toggle.setCursor(Qt.PointingHandCursor)
         self.voice_toggle.toggled.connect(self._on_voice_toggled)
 
-        header.addLayout(title_box)
+        header.addWidget(self.model_selector)
         header.addStretch(1)
         header.addWidget(self.voice_toggle)
-        header.addWidget(self.model_selector)
 
         root.addLayout(header)
 
@@ -323,14 +340,28 @@ class ChatWidget(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
+        
+        self.MAX_CONTENT_WIDTH = 820
+
+        scroll_outer = QWidget()
+        scroll_outer.setObjectName("MessagesScrollOuter")
+        outer_layout = QHBoxLayout(scroll_outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
         self.message_container = QWidget()
         self.message_container.setObjectName("MessagesContainer")
+        self.message_container.setMaximumWidth(self.MAX_CONTENT_WIDTH)
         self.message_layout = QVBoxLayout(self.message_container)
         self.message_layout.setContentsMargins(6, 6, 6, 6)
         self.message_layout.setSpacing(12)
         self.message_layout.addStretch(1)
 
-        self.scroll.setWidget(self.message_container)
+        outer_layout.addStretch(1)
+        outer_layout.addWidget(self.message_container)
+        outer_layout.addStretch(1)
+
+        self.scroll.setWidget(scroll_outer)
         root.addWidget(self.scroll, 1)
 
         # Typing indicator row: kept as the LAST layout item (after the
@@ -346,20 +377,6 @@ class ChatWidget(QWidget):
         typing_row_layout.addWidget(self.typing_widget)
         typing_row_layout.addStretch(1)
         self.message_layout.addWidget(self.typing_row)
-
-        # Regenerate bar: shown right above the composer whenever the last
-        # message is a completed assistant reply.
-        self.regenerate_bar = QWidget()
-        regen_layout = QHBoxLayout(self.regenerate_bar)
-        regen_layout.setContentsMargins(0, 0, 0, 0)
-        self.regenerate_button = QPushButton("↻ Regenerate response")
-        self.regenerate_button.setObjectName("SecondaryButton")
-        self.regenerate_button.clicked.connect(self.regenerate_requested.emit)
-        regen_layout.addStretch(1)
-        regen_layout.addWidget(self.regenerate_button)
-        regen_layout.addStretch(1)
-        self.regenerate_bar.hide()
-        root.addWidget(self.regenerate_bar)
 
         self.attachment_bar = AttachmentBar()
         root.addWidget(self.attachment_bar)
@@ -418,6 +435,12 @@ class ChatWidget(QWidget):
         anim.setEasingCurve(QEasingCurve.OutCubic)
         anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
+    def _mark_latest_assistant_bubble(self, bubble: "MessageBubble") -> None:
+        if self._last_assistant_bubble is not None:
+            self._last_assistant_bubble.set_regenerate_eligible(False)
+        self._last_assistant_bubble = bubble
+        bubble.set_regenerate_eligible(True)
+
     def add_message(
         self,
         text: str,
@@ -435,6 +458,10 @@ class ChatWidget(QWidget):
         if role == "user" and track:
             idx = self._message_index
             bubble.edit_clicked.connect(lambda: self.edit_requested.emit(text, idx))
+
+        if role == "assistant":
+            bubble.regenerate_clicked.connect(self.regenerate_requested.emit)
+            self._mark_latest_assistant_bubble(bubble)
 
         if role == "user":
             row_layout.addStretch(1)
@@ -454,8 +481,8 @@ class ChatWidget(QWidget):
 
     def clear_messages(self) -> None:
         self.discard_streaming_reply()
-        self.show_regenerate(False)
         self._message_index = 0
+        self._last_assistant_bubble = None
 
         # Remove every row except the fixed typing_row and the stretch.
         keep = {self.typing_row}
@@ -473,7 +500,9 @@ class ChatWidget(QWidget):
 
     def begin_streaming_reply(self) -> None:
         self.discard_streaming_reply()
-        self.show_regenerate(False)
+        if self._last_assistant_bubble is not None:
+            self._last_assistant_bubble.set_regenerate_eligible(False)
+            self._last_assistant_bubble = None
 
         row = QWidget()
         row_layout = QHBoxLayout(row)
@@ -481,7 +510,8 @@ class ChatWidget(QWidget):
         row_layout.setSpacing(0)
 
         bubble = MessageBubble("", role="assistant")
-        bubble.setMaximumWidth(760)
+        bubble.setMaximumWidth(MessageBubble.ASSISTANT_TEXT_WIDTH)
+        bubble.regenerate_clicked.connect(self.regenerate_requested.emit)
 
         row_layout.addWidget(bubble)
         row_layout.addStretch(1)
@@ -530,6 +560,7 @@ class ChatWidget(QWidget):
         self._streaming_bubble.set_text(final_text_clean)
         if stats_text:
             self._streaming_bubble.set_stats(stats_text)
+        self._mark_latest_assistant_bubble(self._streaming_bubble)
         self.message_container.adjustSize()
         self.scroll_to_bottom(force=True)
 
@@ -551,6 +582,7 @@ class ChatWidget(QWidget):
 
     def remove_last_assistant_bubble(self) -> None:
         """Remove the last message row (used right before regenerating)."""
+        self._last_assistant_bubble = None
         for i in range(self.message_layout.count() - 1, -1, -1):
             item = self.message_layout.itemAt(i)
             widget = item.widget()
@@ -564,7 +596,11 @@ class ChatWidget(QWidget):
         QTimer.singleShot(0, self.scroll_to_bottom)
 
     def show_regenerate(self, visible: bool) -> None:
-        self.regenerate_bar.setVisible(visible)
+        # No-op: kept so existing main_window.py call sites don't need
+        # touching. Regenerate eligibility is now tracked per-bubble
+        # automatically (see _mark_latest_assistant_bubble) — the hover
+        # icon just reflects whichever bubble is currently "latest".
+        pass
 
     def set_generating(self, is_generating: bool) -> None:
         self._is_generating = is_generating

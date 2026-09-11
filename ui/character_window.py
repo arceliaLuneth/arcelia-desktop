@@ -84,12 +84,6 @@ class CharacterWindow(QWidget):
             return
 
         url = QUrl.fromLocalFile(vrm_path).toString()
-        # Fire-and-forget: viewer.js reports the result itself by setting
-        # document.title (a plain synchronous DOM write), which we pick up
-        # via titleChanged below. Relying on runJavaScript()'s own Promise
-        # -awaiting callback turned out to be unreliable in testing — it
-        # can silently return an empty result even for a resolved Promise
-        # — so we deliberately don't depend on it for anything important.
         self._page.runJavaScript(f"window.loadVRM && window.loadVRM('{url}');")
 
         self._load_timeout_timer = QTimer(self)

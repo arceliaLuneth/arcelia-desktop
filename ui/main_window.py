@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import re
 import traceback
-from pathlib import Path
 from typing import Dict, List
 
 from PySide6.QtCore import QThread, QTimer, Signal
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QMainWindow, QMessageBox, QWidget
 
 from ai.client import OllamaClient
@@ -27,7 +26,7 @@ from ui.toast import ToastManager
 from utils.export_import import export_conversation, import_conversation
 from utils.logger import get_logger, setup_logging
 from utils.settings import AppSettings
-from utils.stats import format_session_stats, format_stats
+from utils.stats import format_stats
 from voice.text_clean import strip_for_speech
 from voice.stt import STTEngine
 from voice.tts import TTSEngine
@@ -145,9 +144,6 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("Arcelia")
-        icon_path = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
-        if icon_path.exists():
-            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
         self.setMinimumSize(1100, 720)
 
@@ -203,7 +199,6 @@ class MainWindow(QMainWindow):
         self.sidebar.rename_requested.connect(self.handle_rename_requested)
         self.sidebar.delete_requested.connect(self.handle_delete_requested)
         self.sidebar.pin_toggled.connect(self.handle_pin_toggled)
-        self.sidebar.search_changed.connect(self.handle_search_changed)
         self.sidebar.export_clicked.connect(self.handle_export)
         self.sidebar.import_clicked.connect(self.handle_import)
         self.sidebar.settings_clicked.connect(self.handle_open_settings)
@@ -408,8 +403,12 @@ class MainWindow(QMainWindow):
 
     def _apply_character_settings(self) -> None:
         want_visible = self.settings.character_enabled and bool(self.settings.vrm_path)
+        was_loaded_path = getattr(self.character_panel, "_pending_vrm_path", "")
+        path_changed = self.settings.vrm_path != was_loaded_path
+        needs_reload = want_visible and (not self.character_panel.isVisible() or path_changed)
+
         self.character_panel.setVisible(want_visible)
-        if want_visible:
+        if needs_reload:
             self.character_panel.load_vrm(self.settings.vrm_path)
 
     def _register_shortcuts(self) -> None:
@@ -417,7 +416,6 @@ class MainWindow(QMainWindow):
 
         bindings = [
             ("Ctrl+N", self.handle_new_chat, "Chat baru"),
-            ("Ctrl+F", lambda: self.sidebar.search_box.setFocus(), "Cari chat"),
             ("Ctrl+L", lambda: self.chat_widget.input.setFocus(), "Fokus ke kolom pesan"),
             ("Ctrl+R", self.handle_regenerate, "Regenerate response"),
             ("Ctrl+Shift+O", self.chat_widget._pick_files, "Lampirkan file"),
@@ -452,8 +450,6 @@ class MainWindow(QMainWindow):
     def refresh_sidebar(self) -> None:
         conversations = self.chat_manager.get_chat_list()
         self.sidebar.set_conversations(conversations)
-        stats_text = format_session_stats(self._session_replies, self._session_tokens)
-        self.sidebar.set_session_stats(stats_text or "")
 
     def start_fresh_chat(self, is_first_run: bool = False) -> None:
         conversation_id = self.chat_manager.new_chat("New Chat")
@@ -496,7 +492,6 @@ class MainWindow(QMainWindow):
 
     def handle_conversation_selected(self, conversation_id: int) -> None:
         self.stop_worker_if_running()
-        self.sidebar.clear_search()
         self.refresh_sidebar()
         self.sidebar.select_conversation(conversation_id)
         self.load_conversation(conversation_id)
@@ -521,18 +516,8 @@ class MainWindow(QMainWindow):
 
     def handle_pin_toggled(self, conversation_id: int) -> None:
         self.chat_manager.toggle_pin(conversation_id)
-
-        query = self.sidebar.search_box.text()
-        if query.strip():
-            self.handle_search_changed(query)
-        else:
-            self.refresh_sidebar()
-
+        self.refresh_sidebar()
         self.sidebar.select_conversation(conversation_id)
-
-    def handle_search_changed(self, query: str) -> None:
-        results = self.chat_manager.search_chats(query)
-        self.sidebar.set_conversations(results)
 
     def handle_user_message(self, text: str, attachments: List[Attachment] | None = None) -> None:
         if self._worker is not None:

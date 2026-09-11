@@ -30,10 +30,14 @@
   }
   </script>
   <script>
+
+    window.__arceliaInitWatchActive = true;
     window.addEventListener('error', (event) => {
+      if (!window.__arceliaInitWatchActive) return;
       document.title = 'arcelia-character-init-failed:' + (event.message || 'unknown script error');
     });
     window.addEventListener('unhandledrejection', (event) => {
+      if (!window.__arceliaInitWatchActive) return;
       const reason = event.reason && event.reason.message ? event.reason.message : String(event.reason);
       document.title = 'arcelia-character-init-failed:' + reason;
     });

@@ -8,12 +8,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -25,7 +25,6 @@ class Sidebar(QFrame):
     rename_requested = Signal(int, str)
     delete_requested = Signal(int)
     pin_toggled = Signal(int)
-    search_changed = Signal(str)
     export_clicked = Signal()
     import_clicked = Signal()
     settings_clicked = Signal()
@@ -34,34 +33,18 @@ class Sidebar(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(300)
+        self.setFixedWidth(280)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(14)
+        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setSpacing(12)
 
         title = QLabel("Arcelia")
         title.setObjectName("SidebarTitle")
 
-        subtitle = QLabel("AI Desktop Assistant")
-        subtitle.setObjectName("SidebarSubtitle")
-
-        header = QVBoxLayout()
-        header.setSpacing(2)
-        header.addWidget(title)
-        header.addWidget(subtitle)
-
-        self.new_chat_btn = QPushButton("＋ New chat")
+        self.new_chat_btn = QPushButton("＋  New chat")
         self.new_chat_btn.setObjectName("PrimaryButton")
         self.new_chat_btn.clicked.connect(self.new_chat_clicked.emit)
-
-        self.search_box = QLineEdit()
-        self.search_box.setObjectName("SearchBox")
-        self.search_box.setPlaceholderText("Cari chat...")
-        self.search_box.textChanged.connect(self.search_changed.emit)
-
-        history_label = QLabel("HISTORY")
-        history_label.setObjectName("SectionLabel")
 
         self.history_list = QListWidget()
         self.history_list.setObjectName("HistoryList")
@@ -69,43 +52,28 @@ class Sidebar(QFrame):
         self.history_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.history_list.customContextMenuRequested.connect(self._open_context_menu)
 
-        tools_label = QLabel("TOOLS")
-        tools_label.setObjectName("SectionLabel")
+        # Secondary actions (export/import/settings/shortcuts) are used
+        # rarely — tucked behind one compact menu instead of four
+        # always-visible buttons, so the sidebar stays focused on the
+        # thing people actually look at most: the chat history.
+        self.more_btn = QToolButton()
+        self.more_btn.setObjectName("MoreButton")
+        self.more_btn.setText("⋯  More")
+        self.more_btn.setPopupMode(QToolButton.InstantPopup)
+        self.more_btn.setCursor(Qt.PointingHandCursor)
 
-        self.export_btn = QPushButton("Export chat")
-        self.export_btn.setObjectName("SecondaryButton")
-        self.export_btn.clicked.connect(self.export_clicked.emit)
+        more_menu = QMenu(self.more_btn)
+        more_menu.addAction("Export chat", self.export_clicked.emit)
+        more_menu.addAction("Import chat", self.import_clicked.emit)
+        more_menu.addSeparator()
+        more_menu.addAction("Keyboard shortcuts", self.shortcuts_clicked.emit)
+        more_menu.addAction("Settings", self.settings_clicked.emit)
+        self.more_btn.setMenu(more_menu)
 
-        self.import_btn = QPushButton("Import chat")
-        self.import_btn.setObjectName("SecondaryButton")
-        self.import_btn.clicked.connect(self.import_clicked.emit)
-
-        settings_btn = QPushButton("Settings")
-        settings_btn.setObjectName("SecondaryButton")
-        settings_btn.clicked.connect(self.settings_clicked.emit)
-
-        self.shortcuts_btn = QPushButton("⌨ Keyboard shortcuts")
-        self.shortcuts_btn.setObjectName("SecondaryButton")
-        self.shortcuts_btn.clicked.connect(self.shortcuts_clicked.emit)
-
-        self.session_stats_label = QLabel("")
-        self.session_stats_label.setObjectName("SessionStats")
-        self.session_stats_label.setAlignment(Qt.AlignCenter)
-
-        layout.addLayout(header)
+        layout.addWidget(title)
         layout.addWidget(self.new_chat_btn)
-        layout.addWidget(self.search_box)
-        layout.addWidget(history_label)
         layout.addWidget(self.history_list, 1)
-        layout.addWidget(tools_label)
-        layout.addWidget(self.export_btn)
-        layout.addWidget(self.import_btn)
-        layout.addWidget(settings_btn)
-        layout.addWidget(self.shortcuts_btn)
-        layout.addWidget(self.session_stats_label)
-
-    def set_session_stats(self, text: str) -> None:
-        self.session_stats_label.setText(text)
+        layout.addWidget(self.more_btn)
 
     def set_conversations(self, conversations: List[Dict[str, Any]]) -> None:
         current_id = self.current_conversation_id()
@@ -144,11 +112,6 @@ class Sidebar(QFrame):
             if int(item.data(Qt.UserRole)) == conversation_id:
                 self.history_list.setCurrentItem(item)
                 return
-
-    def clear_search(self) -> None:
-        self.search_box.blockSignals(True)
-        self.search_box.clear()
-        self.search_box.blockSignals(False)
 
     def _on_item_clicked(self, item: QListWidgetItem) -> None:
         conversation_id = item.data(Qt.UserRole)

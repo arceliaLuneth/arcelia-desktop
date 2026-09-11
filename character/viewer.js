@@ -17,6 +17,7 @@ const CAMERA_TARGET = new THREE.Vector3(0, 1.0, 0);
 const CAMERA_MIN_DIST = 1.0;
 const CAMERA_MAX_DIST = 4.0;
 let cameraDistance = 2.2;
+let cameraDistanceTarget = 2.2; // scroll sets this; actual distance eases toward it each frame
 
 function init() {
   try {
@@ -67,8 +68,16 @@ function updateCameraPosition() {
 
 function onWheelZoom(event) {
   event.preventDefault();
-  const step = event.deltaY > 0 ? 0.15 : -0.15;
-  cameraDistance = Math.min(CAMERA_MAX_DIST, Math.max(CAMERA_MIN_DIST, cameraDistance + step));
+  const step = event.deltaY > 0 ? 0.25 : -0.25;
+  cameraDistanceTarget = Math.min(CAMERA_MAX_DIST, Math.max(CAMERA_MIN_DIST, cameraDistanceTarget + step));
+}
+
+function updateCameraZoom() {
+  // Ease current distance toward the target — smooth zoom instead of an
+  // instant jump on every scroll tick.
+  const diff = cameraDistanceTarget - cameraDistance;
+  if (Math.abs(diff) < 0.001) return;
+  cameraDistance += diff * 0.15;
   updateCameraPosition();
 }
 
@@ -162,14 +171,31 @@ function updateMouth(t) {
   }
 }
 
+function updateBreathing(t) {
+  if (!currentVrm || !currentVrm.humanoid) return;
+
+  const chest = currentVrm.humanoid.getNormalizedBoneNode('chest');
+  const spine = currentVrm.humanoid.getNormalizedBoneNode('spine');
+  if (!chest && !spine) return;
+
+  // Slow sine wave, small amplitude — a static VRM model otherwise reads
+  // as a frozen photo. This alone is what makes "idle" feel alive.
+  const cycle = Math.sin(t * 0.5) * 0.015;
+  if (chest) chest.rotation.x = cycle;
+  if (spine) spine.rotation.x = cycle * 0.5;
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
   const t = clock.getElapsedTime();
 
+  updateCameraZoom();
+
   if (currentVrm) {
     updateBlink(t);
     updateMouth(t);
+    updateBreathing(t);
     currentVrm.update(delta);
   }
 
@@ -191,6 +217,7 @@ window.playExpression = (name, weight = 1.0) => {
 
 function notifyReady() {
   document.title = 'arcelia-character-ready';
+  window.__arceliaInitWatchActive = false;
 }
 
 function notifyLoaded(ok, error) {

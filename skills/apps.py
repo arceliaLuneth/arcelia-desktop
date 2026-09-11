@@ -2,47 +2,12 @@ from __future__ import annotations
 
 from skills.base import Skill
 
-# Each skill lists several possible binaries because EndeavourOS users run
-# different desktop environments (KDE, XFCE, GNOME, etc.) and different
-# apps for the "same" job. The registry tries them in order and launches
-# whichever is actually installed.
-
 BUILTIN_SKILLS: list[Skill] = [
-    Skill(
-        name="spotify",
-        keywords=["spotify"],
-        binary_candidates=["spotify", "spotify-launcher"],
-        description="Buka Spotify",
-    ),
-    Skill(
-        name="firefox",
-        keywords=["firefox", "browser", "internet"],
-        binary_candidates=["firefox"],
-        description="Buka Firefox",
-    ),
     Skill(
         name="chrome",
         keywords=["chrome", "chromium", "google chrome"],
         binary_candidates=["google-chrome-stable", "google-chrome", "chromium"],
         description="Buka Chrome/Chromium",
-    ),
-    Skill(
-        name="discord",
-        keywords=["discord"],
-        binary_candidates=["discord"],
-        description="Buka Discord",
-    ),
-    Skill(
-        name="telegram",
-        keywords=["telegram", "telegram desktop"],
-        binary_candidates=["telegram-desktop", "Telegram"],
-        description="Buka Telegram",
-    ),
-    Skill(
-        name="steam",
-        keywords=["steam"],
-        binary_candidates=["steam"],
-        description="Buka Steam",
     ),
     Skill(
         name="code",
@@ -59,7 +24,7 @@ BUILTIN_SKILLS: list[Skill] = [
     Skill(
         name="terminal",
         keywords=["terminal", "konsol", "console", "cmd"],
-        binary_candidates=["konsole", "alacritty", "kitty", "xfce4-terminal", "gnome-terminal", "xterm"],
+        binary_candidates=["kitty"],
         description="Buka terminal",
     ),
     Skill(
@@ -67,12 +32,6 @@ BUILTIN_SKILLS: list[Skill] = [
         keywords=["kalkulator", "calculator"],
         binary_candidates=["kcalc", "gnome-calculator", "qalculate-gtk", "galculator"],
         description="Buka kalkulator",
-    ),
-    Skill(
-        name="gimp",
-        keywords=["gimp", "photoshop"],
-        binary_candidates=["gimp"],
-        description="Buka GIMP",
     ),
     Skill(
         name="obs",
